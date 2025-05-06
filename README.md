@@ -1,5 +1,7 @@
 # Lua Signal
 
+> ⚠️ Under development
+
 A signals implementation for Neovim and should also works for any Lua code.
 
 ## Preview
@@ -10,21 +12,24 @@ local signal = lib_signal.signal
 local computed = lib_signal.computed
 local effect = lib_signal.effect
 
+-- Create a signal with initial value 1
 local count = signal(1)
 
+-- Logs: count -> 1, subscribing to count and re-run when count changes.
 effect(function()
-	print("count ->", count) --
+	print("count ->", count)
 end)
 
+-- Create a signal that subscribes to `count`.
 local double = computed(function()
 	return 2 * count
 end)
+-- Logs: 2
 print(double.value)
 
-count.value = 4
-print(double.value)
-
+-- Write to a signal, which triggers the effect above. Logs: count -> 9.
 count.value = 9
+-- Logs: 18
 print(double.value)
 ```
 

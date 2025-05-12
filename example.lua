@@ -1,4 +1,4 @@
-local lib_signal = require("signal")
+local lib_signal = require("lua/signal")
 local signal = lib_signal.signal
 local computed = lib_signal.computed
 local effect = lib_signal.effect
@@ -10,7 +10,8 @@ effect(function()
 end)
 
 local double = computed(function()
-	return 2 * count
+	print("> compute double")
+	return 2 * count.value
 end)
 print(double.value)
 

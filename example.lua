@@ -10,13 +10,17 @@ effect(function()
 end)
 
 local double = computed(function()
-	print("> compute double")
 	return 2 * count.value
 end)
-print(double.value)
+
+effect(function()
+	print("double ->", double)
+end)
+
+-- local result = double.value
 
 count.value = 4
-print(double.value)
+-- result = double.value
 
 count.value = 9
-print(double.value)
+-- result = double.value

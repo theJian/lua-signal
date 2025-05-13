@@ -66,25 +66,35 @@ local create_signal = function(initial)
 
 			value = new_value
 
+			local effects = {}
 			local q = { dependents }
 			local i = 1
 			while i <= #q do
-				for cp in pairs(q[i]) do
-					if not cp.is_dirty and cp.dependencies[t] then
-						cp.dependencies = {}
-						cp.is_dirty = true
+				for dep in pairs(q[i]) do
+					if not dep.is_dirty and dep.dependencies[t] then
+						dep.dependencies = {}
 
-						-- TODO effects
-
-						local next = cp.get_dependents()
-						if next then
-							table.insert(q, next)
+						if dep.type == "effect" then
+							table.insert(effects, dep)
+							-- TODO: nested effects
+						else
+							dep.is_dirty = true
+							local next = dep.get_dependents()
+							if next then
+								table.insert(q, next)
+							end
 						end
 					end
 				end
 
 				i = i + 1
 			end
+
+			for _, fx in ipairs(effects) do
+				-- TODO: batch update
+				fx()
+			end
+
 			return
 		end
 		rawset(tbl, key, new_value)
@@ -103,6 +113,8 @@ local create_computed = function(fn)
 	local signal = create_signal()
 
 	local t = {}
+
+	t.type = "computed"
 
 	--- If the state is dirty, in another word, should be updated
 	t.is_dirty = true
@@ -144,6 +156,45 @@ local create_computed = function(fn)
 	return t
 end
 
+local create_effect = function(fn)
+	local teardown
+	local t = {}
+
+	t.type = "effect"
+
+	-- List of related signal or computed
+	t.dependencies = {}
+
+	t.dispose = function()
+		t.dependencies = {}
+		if type(teardown) == "function" then
+			teardown()
+		end
+	end
+
+	local mt = {}
+
+	mt.__call = function()
+		if type(teardown) == "function" then
+			teardown()
+		end
+
+		local prev
+		prev, current = current, t
+		local ok, result = pcall(function()
+			teardown = fn()
+		end)
+		current = prev
+		if not ok then
+			error(result)
+		end
+	end
+
+	setmetatable(t, mt)
+
+	return t
+end
+
 local signal = function(initial)
 	return create_value(create_signal(initial))
 end
@@ -152,7 +203,11 @@ local computed = function(fn)
 	return create_value(create_computed(fn))
 end
 
-local effect = function(fn) end
+local effect = function(fn)
+	local fx = create_effect(fn)
+	fx()
+	return fx.dispose
+end
 
 return {
 	signal = signal,

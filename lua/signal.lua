@@ -12,6 +12,9 @@ local enter = function(ctx)
 end
 
 local batches = nil
+---Group multiple updates into a single batch to optimize performance.
+---
+---@param fn function
 local batch = function(fn)
 	local root = not batches
 	batches = batches or {}
@@ -34,18 +37,6 @@ local create_value = function(t)
 	local mt = getmetatable(t)
 	mt.__tostring = function()
 		return tostring(t.value)
-	end
-	mt.__mul = function(a, b)
-		error("todo")
-	end
-	mt.__div = function(a, b)
-		error("todo")
-	end
-	mt.__sub = function(a, b)
-		error("todo")
-	end
-	mt.__add = function(a, b)
-		error("todo")
 	end
 	setmetatable(t, mt)
 	return t
@@ -229,9 +220,21 @@ local effect = function(fn)
 	return fx.dispose
 end
 
+---Execute a function without tracking its dependencies.
+---
+---@param fn function
+local untrack = function(fn)
+	local result
+	enter(nil)(function()
+		result = fn()
+	end)
+	return result
+end
+
 return {
 	signal = signal,
 	computed = computed,
 	effect = effect,
 	batch = batch,
+	untrack = untrack,
 }

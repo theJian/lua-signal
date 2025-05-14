@@ -1,208 +1,242 @@
-local current = nil
-local create = function(block)
-	local dependencies = {}
-	local cleanups = {}
-	local fx = {}
-	fx.callback = function()
-		local prev = current
-		current = fx
-		local ok, result = pcall(block)
+local current
+local enter = function(ctx)
+	local prev
+	return function(fn)
+		prev, current = current, ctx
+		local ok, result = pcall(fn)
 		current = prev
-		if ok then
-			return result
-		else
+		if not ok then
 			error(result)
 		end
 	end
-	fx.add_dependency = function(signal)
-		signal.subscribe(fx)
-		dependencies[signal] = true
-	end
-	fx.defer = function(fn)
-		if type(fn) == "function" then
-			table.insert(cleanups, fn)
-		end
-	end
-	fx.dispose = function()
-		for signal in pairs(dependencies) do
-			signal.unsubscribe(fx)
-		end
-
-		for _, cleanup in ipairs(cleanups) do
-			cleanup()
-		end
-
-		dependencies = {}
-		cleanups = {}
-	end
-	return fx
 end
 
 local batches = nil
+---Group multiple updates into a single batch to optimize performance.
+---
+---@param fn function
 local batch = function(fn)
 	local root = not batches
-	if root then
-		batches = {}
-	end
+	batches = batches or {}
 	pcall(fn)
 	if root then
 		local effects = batches
 		batches = nil
-		for fx in pairs(effects) do
+		for _, fx in ipairs(effects) do
 			fx()
 		end
 	end
 end
 
-local signal = function(initial)
-	local value = initial
-	local effects = {}
-	local ref = {}
-
-	local get = function()
-		if current and not effects[current] then
-			current.add_dependency(ref)
-		end
-		return value
-	end
-
-	local set = function(next_value)
-		value = next_value
-		local root = not batches
-		local prev = effects
-		effects = {}
-		for fx in pairs(prev) do
-			if root then
-				fx.callback()
-			else
-				batches[fx] = true
-			end
-		end
-	end
-
-	setmetatable(ref, {
-		__index = function(t, key)
-			if key == "value" then
-				return get()
-			end
-			return rawget(t, key)
-		end,
-
-		__newindex = function(t, key, new_value)
-			if key == "value" then
-				if value ~= new_value then
-					set(new_value)
-				end
-			else
-				rawset(t, key, new_value)
-			end
-		end,
-
-		__tostring = function(_)
-			return tostring(get())
-		end,
-
-		__mul = function(a, b)
-			local value_a = type(a) == "number" and a or a.value
-			local value_b = type(b) == "number" and b or b.value
-			return value_a * value_b
-		end,
-
-		__div = function(a, b)
-			local value_a = type(a) == "number" and a or a.value
-			local value_b = type(b) == "number" and b or b.value
-			return value_a / value_b
-		end,
-
-		__sub = function(a, b)
-			local value_a = type(a) == "number" and a or a.value
-			local value_b = type(b) == "number" and b or b.value
-			return value_a - value_b
-		end,
-
-		__add = function(a, b)
-			local value_a = type(a) == "number" and a or a.value
-			local value_b = type(b) == "number" and b or b.value
-			return value_a + value_b
-		end,
-	})
-
-	function ref.peek()
-		return value
-	end
-
-	function ref.subscribe(fx)
-		effects[fx] = true
-	end
-
-	function ref.unsubscribe(fx)
-		effects[fx] = nil
-	end
-
-	return ref
+---Execute a function without tracking its dependencies.
+---
+---@param fn function
+local untrack = function(fn)
+	local result
+	enter(nil)(function()
+		result = fn()
+	end)
+	return result
 end
 
-local effect = function(fn)
-	local teardown
-	local fx = create(function()
-		if type(teardown) == "function" then
-			teardown()
-		end
-		teardown = fn()
-	end)
-	if current then
-		current.defer(fx.dispose)
+---Extend a value to support string conversion, arithmetic operations, etc.
+---
+---@param t table The table to extend, must contain a `value` field
+---
+---@return table
+local create_value = function(t)
+	local mt = getmetatable(t)
+	mt.__tostring = function()
+		return tostring(t.value)
 	end
-	fx.callback()
-	fx.defer(function()
+	setmetatable(t, mt)
+	return t
+end
+
+---Create a signal with initial value
+--
+---@param initial any The initial value for the signal
+--
+---@return table
+local create_signal = function(initial)
+	local value = initial
+	local dependents = {}
+	local t = {}
+
+	--- Get value without subscribing to updates
+	t.peek = function()
+		return value
+	end
+
+	t.get_dependents = function()
+		return dependents
+	end
+
+	local mt = {}
+
+	mt.__index = function(tbl, key)
+		if key == "value" then
+			if current then
+				dependents[current] = true
+				current.dependencies[t] = true
+			end
+			return value
+		end
+		return rawget(tbl, key)
+	end
+
+	mt.__newindex = function(tbl, key, new_value)
+		if key == "value" then
+			if value == new_value then
+				return
+			end
+
+			value = new_value
+
+			local effects = {}
+			local q = { t }
+			local i = 1
+			while i <= #q do
+				local it = q[i]
+				local deps = it.get_dependents()
+				for dep in pairs(deps) do
+					if not dep.is_dirty and dep.dependencies[it] then
+						dep.dependencies = {}
+						dep.is_dirty = true
+						if dep.type == "effect" then
+							table.insert(effects, dep)
+						else
+							table.insert(q, dep.s)
+						end
+					end
+				end
+
+				i = i + 1
+			end
+
+			for _, fx in ipairs(effects) do
+				if batches then
+					table.insert(fx)
+				else
+					fx()
+				end
+			end
+
+			return
+		end
+		rawset(tbl, key, new_value)
+	end
+
+	setmetatable(t, mt)
+	return t
+end
+
+---Create a read-only signal that is tracking the update of signals it relies on.
+---
+---@param fn function Callback that's returning the value for this signal.
+---
+---@return table
+local create_computed = function(fn)
+	local signal = create_signal()
+
+	local t = {}
+
+	t.s = signal
+
+	t.type = "computed"
+
+	--- If the state is dirty, in another word, should be updated
+	t.is_dirty = true
+
+	-- Related signal or computed
+	t.dependencies = {}
+
+	--- Get value without subscribing to updates
+	t.peek = function()
+		return untrack(function()
+			return t.value
+		end)
+	end
+
+	local mt = {}
+
+	mt.__index = function(tbl, key)
+		if key == "value" then
+			if t.is_dirty then
+				enter(t)(function()
+					signal.value = fn()
+				end)
+				t.is_dirty = false
+			end
+			return signal.value
+		end
+		return rawget(tbl, key)
+	end
+
+	setmetatable(t, mt)
+	return t
+end
+
+---Create a effect that runs when any of its dependencies change, return a dispose function
+---
+---@param fn function Side-effect function
+---
+---@return table
+local create_effect = function(fn)
+	local teardown
+	local t = {}
+
+	t.type = "effect"
+
+	--- If the state is dirty, in another word, should be updated
+	t.is_dirty = true
+
+	-- Related signal or computed
+	t.dependencies = {}
+
+	t.dispose = function()
+		t.dependencies = {}
 		if type(teardown) == "function" then
 			teardown()
 		end
-	end)
-	return fx.dispose
+	end
+
+	local mt = {}
+
+	mt.__call = function()
+		if type(teardown) == "function" then
+			teardown()
+		end
+
+		t.is_dirty = false
+		enter(t)(function()
+			teardown = fn()
+		end)
+	end
+
+	setmetatable(t, mt)
+
+	return t
+end
+
+local signal = function(initial)
+	return create_value(create_signal(initial))
 end
 
 local computed = function(fn)
-	local ref = signal()
-	local orig_mt = getmetatable(ref)
-	local orig__index = orig_mt.__index
-	local orig__newindex = orig_mt.__newindex
-	local fx
-
-	local get = function()
-		if not fx then
-			fx = create(function()
-				orig__newindex(ref, "value", fn())
-			end)
-			fx.callback()
-		end
-		return orig__index(ref, "value")
-	end
-
-	setmetatable(ref, {
-		__index = function(t, key)
-			if key == "value" then
-				return get()
-			end
-			return rawget(t, key)
-		end,
-	})
-
-	return ref
+	return create_value(create_computed(fn))
 end
 
-local untrack = function(fn)
-	local prev = current
-	current = nil
-	local result = fn()
-	current = prev
-	return result
+local effect = function(fn)
+	local fx = create_effect(fn)
+	fx()
+	return fx.dispose
 end
 
 return {
 	signal = signal,
 	computed = computed,
 	effect = effect,
-	untrack = untrack,
 	batch = batch,
+	untrack = untrack,
 }

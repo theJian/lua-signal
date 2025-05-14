@@ -11,6 +11,20 @@ local enter = function(ctx)
 	end
 end
 
+local batches = nil
+local batch = function(fn)
+	local root = not batches
+	batches = batches or {}
+	pcall(fn)
+	if root then
+		local effects = batches
+		batches = nil
+		for _, fx in ipairs(effects) do
+			fx()
+		end
+	end
+end
+
 ---Extend a value to support string conversion, arithmetic operations, etc.
 ---
 ---@param t table The table to extend, must contain a `value` field
@@ -86,11 +100,10 @@ local create_signal = function(initial)
 				for dep in pairs(deps) do
 					if not dep.is_dirty and dep.dependencies[it] then
 						dep.dependencies = {}
+						dep.is_dirty = true
 						if dep.type == "effect" then
 							table.insert(effects, dep)
-							-- TODO: nested effects
 						else
-							dep.is_dirty = true
 							table.insert(q, dep.s)
 						end
 					end
@@ -100,8 +113,11 @@ local create_signal = function(initial)
 			end
 
 			for _, fx in ipairs(effects) do
-				-- TODO: batch update
-				fx()
+				if batches then
+					table.insert(fx)
+				else
+					fx()
+				end
 			end
 
 			return
@@ -130,7 +146,7 @@ local create_computed = function(fn)
 	--- If the state is dirty, in another word, should be updated
 	t.is_dirty = true
 
-	-- List of related signal or computed
+	-- Related signal or computed
 	t.dependencies = {}
 
 	--- Get value without subscribing to updates
@@ -157,13 +173,21 @@ local create_computed = function(fn)
 	return t
 end
 
+---Create a effect that runs when any of its dependencies change, return a dispose function
+---
+---@param fn function Side-effect function
+---
+---@return table
 local create_effect = function(fn)
 	local teardown
 	local t = {}
 
 	t.type = "effect"
 
-	-- List of related signal or computed
+	--- If the state is dirty, in another word, should be updated
+	t.is_dirty = true
+
+	-- Related signal or computed
 	t.dependencies = {}
 
 	t.dispose = function()
@@ -180,6 +204,7 @@ local create_effect = function(fn)
 			teardown()
 		end
 
+		t.is_dirty = false
 		enter(t)(function()
 			teardown = fn()
 		end)
@@ -208,4 +233,5 @@ return {
 	signal = signal,
 	computed = computed,
 	effect = effect,
+	batch = batch,
 }

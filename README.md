@@ -13,7 +13,7 @@ local effect = lib_signal.effect
 local count = signal(1)
 
 effect(function()
-	print("count ->", count) --
+	print("count ->", count)
 end)
 
 local double = computed(function()

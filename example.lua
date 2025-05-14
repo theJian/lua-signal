@@ -17,10 +17,6 @@ effect(function()
 	print("double ->", double)
 end)
 
--- local result = double.value
-
 count.value = 4
--- result = double.value
 
 count.value = 9
--- result = double.value

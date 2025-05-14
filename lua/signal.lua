@@ -67,22 +67,20 @@ local create_signal = function(initial)
 			value = new_value
 
 			local effects = {}
-			local q = { dependents }
+			local q = { t }
 			local i = 1
 			while i <= #q do
-				for dep in pairs(q[i]) do
-					if not dep.is_dirty and dep.dependencies[t] then
+				local it = q[i]
+				local deps = it.get_dependents()
+				for dep in pairs(deps) do
+					if not dep.is_dirty and dep.dependencies[it] then
 						dep.dependencies = {}
-
 						if dep.type == "effect" then
 							table.insert(effects, dep)
 							-- TODO: nested effects
 						else
 							dep.is_dirty = true
-							local next = dep.get_dependents()
-							if next then
-								table.insert(q, next)
-							end
+							table.insert(q, dep.s)
 						end
 					end
 				end
@@ -114,6 +112,8 @@ local create_computed = function(fn)
 
 	local t = {}
 
+	t.s = signal
+
 	t.type = "computed"
 
 	--- If the state is dirty, in another word, should be updated
@@ -125,10 +125,6 @@ local create_computed = function(fn)
 	--- Get value without subscribing to updates
 	t.peek = function()
 		return signal.peek()
-	end
-
-	t.get_dependents = function()
-		return signal.get_dependents()
 	end
 
 	local mt = {}

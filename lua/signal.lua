@@ -28,6 +28,17 @@ local batch = function(fn)
 	end
 end
 
+---Execute a function without tracking its dependencies.
+---
+---@param fn function
+local untrack = function(fn)
+	local result
+	enter(nil)(function()
+		result = fn()
+	end)
+	return result
+end
+
 ---Extend a value to support string conversion, arithmetic operations, etc.
 ---
 ---@param t table The table to extend, must contain a `value` field
@@ -142,7 +153,9 @@ local create_computed = function(fn)
 
 	--- Get value without subscribing to updates
 	t.peek = function()
-		return signal.peek()
+		return untrack(function()
+			return t.value
+		end)
 	end
 
 	local mt = {}
@@ -218,17 +231,6 @@ local effect = function(fn)
 	local fx = create_effect(fn)
 	fx()
 	return fx.dispose
-end
-
----Execute a function without tracking its dependencies.
----
----@param fn function
-local untrack = function(fn)
-	local result
-	enter(nil)(function()
-		result = fn()
-	end)
-	return result
 end
 
 return {

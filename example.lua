@@ -5,7 +5,7 @@ local effect = lib_signal.effect
 
 local count = signal(1)
 
-effect(function()
+local dispose = effect(function()
 	print("count ->", count)
 end)
 
@@ -18,5 +18,7 @@ effect(function()
 end)
 
 count.value = 4
+
+dispose()
 
 count.value = 9

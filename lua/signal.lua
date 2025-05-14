@@ -1,4 +1,15 @@
 local current
+local enter = function(ctx)
+	local prev
+	return function(fn)
+		prev, current = current, ctx
+		local ok, result = pcall(fn)
+		current = prev
+		if not ok then
+			error(result)
+		end
+	end
+end
 
 ---Extend a value to support string conversion, arithmetic operations, etc.
 ---
@@ -132,16 +143,10 @@ local create_computed = function(fn)
 	mt.__index = function(tbl, key)
 		if key == "value" then
 			if t.is_dirty then
-				local prev
-				prev, current = current, t
-				local ok, result = pcall(function()
+				enter(t)(function()
 					signal.value = fn()
 				end)
-				current = prev
 				t.is_dirty = false
-				if not ok then
-					error(result)
-				end
 			end
 			return signal.value
 		end
@@ -175,15 +180,9 @@ local create_effect = function(fn)
 			teardown()
 		end
 
-		local prev
-		prev, current = current, t
-		local ok, result = pcall(function()
+		enter(t)(function()
 			teardown = fn()
 		end)
-		current = prev
-		if not ok then
-			error(result)
-		end
 	end
 
 	setmetatable(t, mt)
